@@ -1,0 +1,380 @@
+---
+title: "TP 6 : Texte et expressions régulières"
+author: "Julien Forestier"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+```
+
+# Partie A : Fonctions de texte et premières regex
+
+## A1
+
+**Prédictions :**
+
+1. `nchar("Été 2026 ")` : **9** (3 lettres + 1 espace + 4 chiffres + 1 espace final).
+2. `str_sub("Conservatoire", -5)` : **"toire"** (extraction à partir du 5e caractère en partant de la fin jusqu'à la fin de la chaîne).
+3. `str_detect(c("a.b", "axb", "ab"), "a.b")` : **`TRUE`, `TRUE`, `FALSE`** (le point `.` en regex correspond à n'importe quel caractère unique, donc il valide `"a.b"` et `"axb"`, mais pas `"ab"`).
+4. `str_detect(c("a.b", "axb", "ab"), "a\\.b")` : **`TRUE`, `FALSE`, `FALSE`** (l'échappement `\\.` force la recherche du caractère point littéral).
+5. `str_count("banana", "an")` : **2** (le motif `"an"` apparaît deux fois sans chevauchement).
+6. `str_replace("aaa", "a", "b")` : **"baa"** (`str_replace` ne remplace que la première occurrence trouvée).
+7. `str_extract("Tel: 06 12 34 56 78", "\\d+")` : **"06"** (`\\d+` capture la première suite contiguë de chiffres avant le premier espace).
+8. `str_split("a,b,,c", ",")` : **une liste contenant le vecteur `c("a", "b", "", "c")`** (la présence de deux virgules consécutives génère une chaîne vide au milieu).
+
+```{r}
+nchar("Été 2026 ")
+str_sub("Conservatoire", -5)
+str_detect(c("a.b", "axb", "ab"), "a.b")
+str_detect(c("a.b", "axb", "ab"), "a\\.b")
+str_count("banana", "an")
+str_replace("aaa", "a", "b")
+str_extract("Tel: 06 12 34 56 78", "\\d+")
+str_split("a,b,,c", ",")
+```
+
+**Explication des différences :** Toutes les prédictions correspondent exactement aux résultats obtenus à l'exécution.
+
+## A2
+
+### a. Nettoyage et mise en majuscule initiale
+
+```{r}
+villes <- c(" paris", "SAINT-ÉTIENNE ", "aix-en-provence", "Le Mans", "nîmes")
+
+villes_propres <- villes |>
+  str_trim() |>
+  str_to_title()
+
+villes_propres
+```
+
+Le résultat pour `"aix-en-provence"` donne `"Aix-En-Provence"`, ce qui n'est pas tout à fait correct typographiquement en français car la préposition `"en"` ne devrait pas prendre de majuscule (`"Aix-en-Provence"`).
+
+### b. Alignement à droite et longueur
+
+```{r}
+villes_alignees <- str_glue("{str_pad(villes_propres, width = 20, side = 'left')} ({str_length(villes_propres)})")
+villes_alignees
+```
+
+### c. Version sans accents, en majuscules avec tirets
+
+```{r}
+villes_norm <- villes |>
+  str_trim() |>
+  str_to_upper() |>
+  stringi::stri_trans_general("Latin-ASCII") |>
+  str_replace_all("\\s+", "-")
+
+villes_norm
+```
+
+## A3
+
+### a. Validation et affichage des codes invalides
+
+```{r}
+codes <- c("FR-2024-00123", "IT-2024-12345", "FR-2025-04567",
+           "FR-2026-00042", "DE-2025-00089", "fr-2023-1", "FR2025-00999",
+           "ES-2025-0071")
+
+regex_code <- "^[A-Z]{2}-\\d{4}-\\d{5}$"
+
+codes[!str_detect(codes, regex_code)]
+```
+
+### b. Extraction dans un tibble pour les codes valides
+
+```{r}
+codes_valides <- str_subset(codes, regex_code)
+
+matrice_codes <- str_match(codes_valides, "^([A-Z]{2})-(\\d{4})-(\\d{5})$")
+
+df_codes <- tibble(
+  pays = matrice_codes[, 2],
+  annee = matrice_codes[, 3],
+  numero = matrice_codes[, 4]
+)
+
+df_codes
+```
+
+### c. Nombre de codes valides par pays
+
+```{r}
+df_codes |>
+  count(pays, name = "nb_codes")
+```
+
+Il y a 3 codes valides pour la France (`FR`), 1 pour l'Allemagne (`DE`) et 1 pour l'Italie (`IT`).
+
+## A4
+
+```{r}
+x <- c("rapport.pdf", "photo.PNG", "notes.pdf.bak", "data_pdf")
+```
+
+**Erreurs identifiées :**
+
+1. `str_subset(x, ".pdf")` : Le point `.` n'est pas échappé (il correspond donc à n'importe quel caractère, ce qui sélectionne aussi `"data_pdf"`) et l'absence d'ancre de fin `$` sélectionne également `"notes.pdf.bak"`.
+2. `str_detect("prix: 1500 €", "^\\d+$")` : Les ancres `^` et `$` exigent que la chaîne entière ne soit composée que de chiffres, ce qui renvoie `FALSE` à cause du texte et du symbole monétaire autour.
+3. `str_replace("2026-01-15", "(\\d+)-(\\d+)-(\\d+)", "\\3/\\2/\\1")` : L'instruction est correcte et inverse bien l'année et le jour pour produire `"15/01/2026"`.
+4. `str_detect(c("Photo", "photo"), "photo")` : La regex est sensible à la casse (rejetant `"Photo"`) et ne possède pas d'ancre de début `^` pour garantir que le mot est bien au début de la chaîne.
+
+**Corrections :**
+
+```{r}
+str_subset(x, "\\.pdf$")
+str_detect("prix: 1500 €", "\\d+")
+str_replace("2026-01-15", "(\\d{4})-(\\d{2})-(\\d{2})", "\\3/\\2/\\1")
+str_detect(c("Photo", "photo"), regex("^photo", ignore_case = TRUE))
+```
+
+
+
+
+
+
+
+
+
+# Partie B : Nettoyer un fichier de contacts
+
+## B1
+
+```{r}
+contacts <- read_csv("data/contacts_bruts.csv", show_col_types = FALSE)
+
+glimpse(contacts)
+
+map(contacts, ~ head(.x, 10))
+```
+
+On observe une forte hétérogénéité selon les colonnes : les noms alternent entre `Prénom Nom`, `NOM Prénom`, `Nom, Prénom`, tout en majuscules ou en minuscules avec des espaces superflus ; les e-mails varient en casse et incluent des formats incomplets ou invalides ; les téléphones mélangent espaces, points, tirets, parenthèses et indicatifs `+33` ou `+33 (0)` ; les adresses regroupent rue, code postal et ville avec des ponctuations variables ; les dates d'inscription suivent plusieurs formats (`jj/mm/aaaa`, `aaaa-mm-jj`, `jj-mm-aa`).
+
+## B2
+
+### a. Séparation du prénom et du nom
+
+```{r}
+col_nom <- if ("nom_complet" %in% names(contacts)) "nom_complet" else "nom"
+
+contacts_noms <- contacts |>
+  mutate(
+    nom_nettoye = str_squish(.data[[col_nom]]),
+    a_virgule = str_detect(nom_nettoye, ","),
+    premier_mot = word(nom_nettoye, 1),
+    second_mot = word(nom_nettoye, 2),
+    premier_maj = str_detect(premier_mot, "^[[:upper:]]+$"),
+    second_maj = str_detect(second_mot, "^[[:upper:]]+$"),
+    prenom = case_when(
+      a_virgule ~ str_trim(str_extract(nom_nettoye, "[^,]+$")),
+      premier_maj & !is.na(second_mot) & !second_maj ~ word(nom_nettoye, 2, -1),
+      TRUE ~ word(nom_nettoye, 1)
+    ),
+    nom = case_when(
+      a_virgule ~ str_trim(str_extract(nom_nettoye, "^[^,]+")),
+      premier_maj & !is.na(second_mot) & !second_maj ~ premier_mot,
+      TRUE ~ word(nom_nettoye, 2, -1)
+    )
+  )
+```
+
+### b. Mise en forme du prénom et du nom
+
+```{r}
+contacts_noms <- contacts_noms |>
+  mutate(
+    prenom = str_to_title(prenom),
+    nom = str_to_upper(nom)
+  )
+```
+
+### c. Vérification et cas problématiques
+
+```{r}
+contacts_noms |>
+  select(all_of(col_nom), prenom, nom) |>
+  slice_head(n = 15)
+```
+
+Les noms composés (avec trait d'union ou particules), les entrées formées d'un seul mot sans virgule (`word(..., 2, -1)` renvoyant `NA`) ou les chaînes entièrement en majuscules sans virgule posent encore problème car la règle générique ne peut pas distinguer à coup sûr le prénom du nom.
+
+## B3
+
+### a. Normalisation et validation des e-mails
+
+```{r}
+regex_email <- "^[a-z0-9._-]+@[a-z0-9-]+\\.[a-z]{2,4}$"
+
+contacts_emails <- contacts_noms |>
+  mutate(
+    email_propre = str_to_lower(str_trim(email)),
+    email_valide = str_detect(email_propre, regex_email),
+    email_final = if_else(email_valide, email_propre, NA_character_)
+  )
+```
+
+### b. E-mails invalides
+
+```{r}
+emails_invalides <- contacts_emails |>
+  filter(!email_valide | is.na(email_valide))
+
+nrow(emails_invalides)
+
+emails_invalides |>
+  select(prenom, nom, email)
+```
+
+Il y a `r nrow(emails_invalides)` e-mails invalides (ou manquants), listés ci-dessus avec le nom du contact correspondant.
+
+### c. Domaines les plus fréquents parmi les e-mails valides
+
+```{r}
+contacts_emails |>
+  filter(email_valide) |>
+  mutate(domaine = str_extract(email_propre, "(?<=@)[a-z0-9.-]+$")) |>
+  count(domaine, sort = TRUE, name = "nb_contacts")
+```
+
+## B4
+
+### a. Normalisation des numéros de téléphone
+
+```{r}
+contacts_tel <- contacts_emails |>
+  mutate(
+    tel_sans_indicatif = str_replace(telephone, "^\\s*\\+?33\\s*(?:\\(0\\)|0)?\\s*", "0"),
+    tel_chiffres = str_replace_all(tel_sans_indicatif, "\\D+", ""),
+    tel_valide = str_detect(tel_chiffres, "^0\\d{9}$"),
+    tel_final = if_else(
+      tel_valide,
+      str_replace(tel_chiffres, "^(\\d{2})(\\d{2})(\\d{2})(\\d{2})(\\d{2})$", "\\1 \\2 \\3 \\4 \\5"),
+      NA_character_
+    )
+  )
+```
+
+### b. Nombre de numéros valides et de mobiles
+
+```{r}
+nb_tel_valides <- sum(!is.na(contacts_tel$tel_final))
+nb_mobiles <- sum(str_detect(contacts_tel$tel_final, "^0[67]"), na.rm = TRUE)
+
+c(valides = nb_tel_valides, mobiles = nb_mobiles)
+```
+
+On compte `r nb_tel_valides` numéros valides, dont `r nb_mobiles` numéros mobiles commençant par `06` ou `07`.
+
+### c. Répartition des numéros fixes par zone
+
+```{r}
+contacts_tel |>
+  filter(str_detect(tel_final, "^0[1-5]")) |>
+  mutate(
+    zone = case_when(
+      str_starts(tel_final, "01") ~ "01: Île-de-France",
+      str_starts(tel_final, "02") ~ "02: Nord-Ouest",
+      str_starts(tel_final, "03") ~ "03: Nord-Est",
+      str_starts(tel_final, "04") ~ "04: Sud-Est",
+      str_starts(tel_final, "05") ~ "05: Sud-Ouest"
+    )
+  ) |>
+  count(zone, sort = TRUE, name = "nb_fixes")
+```
+
+## B5
+
+```{r}
+contacts_adresses <- contacts_tel |>
+  separate_wider_regex(
+    adresse,
+    patterns = c(
+      rue = ".+?",
+      ",?\\s+",
+      cp = "\\d{5}",
+      "\\s+",
+      ville = ".+"
+    ),
+    too_few = "align_start"
+  ) |>
+  mutate(
+    rue = str_squish(rue),
+    ville = str_to_title(str_squish(ville)),
+    departement = str_sub(cp, 1, 2)
+  )
+
+contacts_adresses |>
+  count(ville, departement, sort = TRUE, name = "nb_contacts")
+```
+
+## B6
+
+### a. Comptage par format de date
+
+```{r}
+col_date <- intersect(c("date_inscription", "inscription", "date"), names(contacts))[1]
+dates_str <- as.character(contacts_adresses[[col_date]])
+
+nb_jma_4 <- sum(str_detect(dates_str, "^\\d{2}/\\d{2}/\\d{4}$"), na.rm = TRUE)
+nb_amj_4 <- sum(str_detect(dates_str, "^\\d{4}-\\d{2}-\\d{2}$"), na.rm = TRUE)
+nb_jma_2 <- sum(str_detect(dates_str, "^\\d{2}-\\d{2}-\\d{2}$"), na.rm = TRUE)
+
+c(jj_mm_aaaa = nb_jma_4, aaaa_mm_jj = nb_amj_4, jj_mm_aa = nb_jma_2)
+```
+
+### b. Conversion en dates R
+
+```{r}
+contacts_dates <- contacts_adresses |>
+  mutate(
+    .date_brute = as.character(.data[[col_date]]),
+    inscription = case_when(
+      str_detect(.date_brute, "^\\d{2}/\\d{2}/\\d{4}$") ~ dmy(.date_brute),
+      str_detect(.date_brute, "^\\d{4}-\\d{2}-\\d{2}$") ~ ymd(.date_brute),
+      str_detect(.date_brute, "^\\d{2}-\\d{2}-\\d{2}$") ~ dmy(.date_brute),
+      TRUE ~ as.Date(NA)
+    )
+  ) |>
+  select(-.date_brute)
+```
+
+### c. Vérification des dates manquantes et inscriptions par année
+
+```{r}
+nb_dates_manquantes <- sum(is.na(contacts_dates$inscription))
+nb_dates_manquantes
+
+contacts_dates |>
+  mutate(annee = year(inscription)) |>
+  count(annee, name = "nb_inscriptions")
+```
+
+Aucune date n'est manquante (`r nb_dates_manquantes` valeur manquante), et le tableau ci-dessus donne le nombre d'inscriptions par année.
+
+## B7
+
+```{r}
+dir.create("sorties", showWarnings = FALSE)
+
+contacts_propres <- contacts_dates |>
+  select(id, prenom, nom, email = email_final, tel = tel_final, cp, ville, inscription)
+
+write_csv(contacts_propres, "sorties/contacts_propres.csv")
+
+nb_complets <- contacts_propres |>
+  filter(if_all(everything(), ~ !is.na(.x))) |>
+  nrow()
+
+nb_complets
+```
+
+Au total, `r nb_complets` contacts sont complets (sans aucune valeur manquante) sur l'ensemble du fichier.
