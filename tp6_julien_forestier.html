@@ -2237,9 +2237,380 @@ regex_ipv4 &lt;- paste0(&quot;^&quot;, octet, &quot;\\.&quot;, octet, &quot;\\.&
 toutes_ipv4 &lt;- all(str_detect(log_tbl$ip, regex_ipv4))
 toutes_ipv4</code></pre>
 <pre><code>## [1] TRUE</code></pre>
-<p>Toutes les adresses IP du journal respectent bien le format IPv4
-(TRUE).</p>
 </div>
+</div>
+</div>
+<div id="partie-d-analyse-textuelle-davis-clients" class="section level1">
+<h1>Partie D : Analyse textuelle d’avis clients</h1>
+<div id="d1" class="section level2">
+<h2>D1</h2>
+<div id="a.-longueur-moyenne-et-avis-le-plus-long" class="section level3">
+<h3>a. Longueur moyenne et avis le plus long</h3>
+<pre class="r"><code>avis &lt;- read_csv(&quot;data/avis_clients.csv&quot;, show_col_types = FALSE) |&gt;
+  mutate(id_avis = row_number())
+
+col_texte &lt;- intersect(c(&quot;texte&quot;, &quot;avis&quot;, &quot;commentaire&quot;, &quot;review&quot;), names(avis))[1]
+col_note &lt;- intersect(c(&quot;note&quot;, &quot;rating&quot;, &quot;score&quot;), names(avis))[1]
+
+avis_d1 &lt;- avis |&gt;
+  mutate(
+    texte_str = as.character(.data[[col_texte]]),
+    note_num = as.numeric(.data[[col_note]]),
+    longueur = str_length(texte_str)
+  )
+
+longueur_moyenne &lt;- mean(avis_d1$longueur, na.rm = TRUE)
+avis_plus_long &lt;- avis_d1 |&gt;
+  slice_max(order_by = longueur, n = 1, with_ties = FALSE)
+
+longueur_moyenne</code></pre>
+<pre><code>## [1] 42.61667</code></pre>
+<pre class="r"><code>avis_plus_long |&gt;
+  select(id_avis, produit, note_num, longueur, texte_str)</code></pre>
+<pre><code>## # A tibble: 1 × 5
+##   id_avis produit             note_num longueur texte_str                       
+##     &lt;int&gt; &lt;chr&gt;                  &lt;dbl&gt;    &lt;int&gt; &lt;chr&gt;                           
+## 1      71 Chaussures trail X3        5       81 EXCELLENT RAPPORT QUALITÉ/PRIX …</code></pre>
+<p>La longueur moyenne d’un avis est de 42.62 caractères, et l’avis le
+plus long compte 81 caractères (sur le produit Chaussures trail X3).</p>
+</div>
+<div id="b.-avis-entièrement-en-majuscules-et-note-moyenne" class="section level3">
+<h3>b. Avis entièrement en majuscules et note moyenne</h3>
+<pre class="r"><code>avis_d1 &lt;- avis_d1 |&gt;
+  mutate(
+    tout_maj = str_detect(texte_str, &quot;[[:alpha:]]&quot;) &amp; (texte_str == str_to_upper(texte_str))
+  )
+
+avis_d1 |&gt;
+  group_by(tout_maj) |&gt;
+  summarise(
+    nb_avis = n(),
+    note_moyenne = mean(note_num, na.rm = TRUE),
+    .groups = &quot;drop&quot;
+  )</code></pre>
+<pre><code>## # A tibble: 2 × 3
+##   tout_maj nb_avis note_moyenne
+##   &lt;lgl&gt;      &lt;int&gt;        &lt;dbl&gt;
+## 1 FALSE        164         3.85
+## 2 TRUE          16         3.94</code></pre>
+<p>Il y a 16 avis écrits entièrement en majuscules, et leur note moyenne
+diffère de celle des autres avis comme le montre le tableau
+ci-dessus.</p>
+</div>
+<div id="c.-points-dexclamation-et-émoticônes" class="section level3">
+<h3>c. Points d’exclamation et émoticônes</h3>
+<pre class="r"><code>nb_exclam &lt;- sum(str_detect(avis_d1$texte_str, &quot;!&quot;), na.rm = TRUE)
+nb_emoticone &lt;- sum(str_detect(avis_d1$texte_str, &quot;:\\)|:\\(|;\\)|:D&quot;), na.rm = TRUE)
+
+c(point_exclamation = nb_exclam, emoticone = nb_emoticone)</code></pre>
+<pre><code>## point_exclamation         emoticone 
+##                38                14</code></pre>
+<p>On dénombre 38 avis contenant au moins un point d’exclamation et 14
+avis contenant un émoticône.</p>
+</div>
+</div>
+<div id="d2" class="section level2">
+<h2>D2</h2>
+<div id="a.-découpage-en-mots" class="section level3">
+<h3>a. Découpage en mots</h3>
+<pre class="r"><code>mots &lt;- avis_d1 |&gt;
+  mutate(
+    texte_minuscule = str_to_lower(texte_str),
+    liste_mots = str_split(texte_minuscule, &quot;[^[[:alpha:]&#39;]]+&quot;)
+  ) |&gt;
+  select(id_avis, produit, note = note_num, liste_mots) |&gt;
+  unnest(liste_mots) |&gt;
+  mutate(mot = str_remove_all(liste_mots, &quot;^&#39;+|&#39;+$&quot;)) |&gt;
+  select(id_avis, produit, note, mot) |&gt;
+  filter(mot != &quot;&quot;, !is.na(mot))
+
+head(mots, 15)</code></pre>
+<pre><code>## # A tibble: 15 × 4
+##    id_avis produit             note mot       
+##      &lt;int&gt; &lt;chr&gt;              &lt;dbl&gt; &lt;chr&gt;     
+##  1       1 Veste pluie légère     1 trop      
+##  2       1 Veste pluie légère     1 cher      
+##  3       1 Veste pluie légère     1 pour      
+##  4       1 Veste pluie légère     1 ce        
+##  5       1 Veste pluie légère     1 que       
+##  6       1 Veste pluie légère     1 c&#39;est     
+##  7       2 Gourde isotherme       5 je        
+##  8       2 Gourde isotherme       5 recommande
+##  9       2 Gourde isotherme       5 et        
+## 10       2 Gourde isotherme       5 excellent 
+## 11       2 Gourde isotherme       5 rapport   
+## 12       2 Gourde isotherme       5 qualité   
+## 13       2 Gourde isotherme       5 prix      
+## 14       2 Gourde isotherme       5 et        
+## 15       2 Gourde isotherme       5 parfait</code></pre>
+</div>
+<div id="b.-nombre-total-de-mots-et-mots-distincts" class="section level3">
+<h3>b. Nombre total de mots et mots distincts</h3>
+<pre class="r"><code>nb_mots_total &lt;- nrow(mots)
+nb_mots_distincts &lt;- n_distinct(mots$mot)
+
+c(total_mots = nb_mots_total, mots_distincts = nb_mots_distincts)</code></pre>
+<pre><code>##     total_mots mots_distincts 
+##           1169             64</code></pre>
+<p>Le corpus contient 1169 mots au total pour 64 mots distincts.</p>
+</div>
+<div id="c.-top-10-des-mots-avec-et-sans-mots-vides" class="section level3">
+<h3>c. Top 10 des mots avec et sans mots vides</h3>
+<pre class="r"><code>mots |&gt;
+  count(mot, sort = TRUE, name = &quot;occurrences&quot;) |&gt;
+  slice_head(n = 10)</code></pre>
+<pre><code>## # A tibble: 10 × 2
+##    mot        occurrences
+##    &lt;chr&gt;            &lt;int&gt;
+##  1 et                  72
+##  2 qualité             54
+##  3 la                  53
+##  4 satisfait           38
+##  5 très                38
+##  6 le                  37
+##  7 livraison           37
+##  8 je                  36
+##  9 recommande          36
+## 10 pour                34</code></pre>
+<pre class="r"><code>mots_vides &lt;- c(
+  &quot;le&quot;, &quot;la&quot;, &quot;les&quot;, &quot;un&quot;, &quot;une&quot;, &quot;des&quot;, &quot;du&quot;, &quot;de&quot;, &quot;d&quot;, &quot;l&quot;,
+  &quot;et&quot;, &quot;ou&quot;, &quot;mais&quot;, &quot;donc&quot;, &quot;or&quot;, &quot;ni&quot;, &quot;car&quot;,
+  &quot;à&quot;, &quot;au&quot;, &quot;aux&quot;, &quot;en&quot;, &quot;dans&quot;, &quot;sur&quot;, &quot;pour&quot;, &quot;par&quot;, &quot;avec&quot;, &quot;sans&quot;, &quot;chez&quot;, &quot;vers&quot;, &quot;sous&quot;,
+  &quot;je&quot;, &quot;tu&quot;, &quot;il&quot;, &quot;elle&quot;, &quot;on&quot;, &quot;nous&quot;, &quot;vous&quot;, &quot;ils&quot;, &quot;elles&quot;,
+  &quot;me&quot;, &quot;te&quot;, &quot;se&quot;, &quot;lui&quot;, &quot;leur&quot;, &quot;y&quot;, &quot;en&quot;, &quot;mon&quot;, &quot;ma&quot;, &quot;mes&quot;, &quot;ton&quot;, &quot;ta&quot;, &quot;tes&quot;, &quot;son&quot;, &quot;sa&quot;, &quot;ses&quot;, &quot;notre&quot;, &quot;nos&quot;, &quot;votre&quot;, &quot;vos&quot;, &quot;leurs&quot;,
+  &quot;ce&quot;, &quot;cet&quot;, &quot;cette&quot;, &quot;ces&quot;, &quot;qui&quot;, &quot;que&quot;, &quot;quoi&quot;, &quot;dont&quot;, &quot;où&quot;,
+  &quot;est&quot;, &quot;sont&quot;, &quot;ai&quot;, &quot;as&quot;, &quot;a&quot;, &quot;avons&quot;, &quot;avez&quot;, &quot;ont&quot;, &quot;être&quot;, &quot;avoir&quot;, &quot;fait&quot;, &quot;faire&quot;,
+  &quot;pas&quot;, &quot;ne&quot;, &quot;plus&quot;, &quot;très&quot;, &quot;bien&quot;, &quot;tout&quot;, &quot;tous&quot;, &quot;toute&quot;, &quot;toutes&quot;, &quot;ça&quot;, &quot;c&quot;
+)
+
+mots_sans_vides &lt;- mots |&gt;
+  filter(!mot %in% mots_vides)
+
+mots_sans_vides |&gt;
+  count(mot, sort = TRUE, name = &quot;occurrences&quot;) |&gt;
+  slice_head(n = 10)</code></pre>
+<pre><code>## # A tibble: 10 × 2
+##    mot        occurrences
+##    &lt;chr&gt;            &lt;int&gt;
+##  1 qualité             54
+##  2 satisfait           38
+##  3 livraison           37
+##  4 recommande          36
+##  5 conforme            32
+##  6 rapide              30
+##  7 produit             29
+##  8 super               29
+##  9 bonne               28
+## 10 parfait             28</code></pre>
+</div>
+</div>
+<div id="d3" class="section level2">
+<h2>D3</h2>
+<div id="a.-top-5-des-mots-par-catégorie-de-note" class="section level3">
+<h3>a. Top 5 des mots par catégorie de note</h3>
+<pre class="r"><code>mots_categories &lt;- mots_sans_vides |&gt;
+  mutate(
+    categorie = case_when(
+      note &lt;= 2 ~ &quot;negatif&quot;,
+      note == 3 ~ &quot;neutre&quot;,
+      note &gt;= 4 ~ &quot;positif&quot;
+    )
+  )
+
+mots_categories |&gt;
+  count(categorie, mot, name = &quot;occurrences&quot;) |&gt;
+  group_by(categorie) |&gt;
+  slice_max(order_by = occurrences, n = 5, with_ties = FALSE) |&gt;
+  arrange(categorie, desc(occurrences))</code></pre>
+<pre><code>## # A tibble: 15 × 3
+## # Groups:   categorie [3]
+##    categorie mot        occurrences
+##    &lt;chr&gt;     &lt;chr&gt;            &lt;int&gt;
+##  1 negatif   trop                13
+##  2 negatif   recommande           9
+##  3 negatif   petite               8
+##  4 negatif   taille               8
+##  5 negatif   bout                 7
+##  6 neutre    travail             11
+##  7 neutre    lourd               10
+##  8 neutre    peu                 10
+##  9 neutre    correct              9
+## 10 neutre    conforme             7
+## 11 positif   qualité             50
+## 12 positif   satisfait           38
+## 13 positif   bonne               28
+## 14 positif   parfait             28
+## 15 positif   randonnée           28</code></pre>
+</div>
+<div id="b.-note-moyenne-des-mots-fréquents-10-occurrences" class="section level3">
+<h3>b. Note moyenne des mots fréquents (&gt;= 10 occurrences)</h3>
+<pre class="r"><code>stats_mots &lt;- mots |&gt;
+  group_by(mot) |&gt;
+  summarise(
+    nb_occurrences = n(),
+    note_moyenne = mean(note, na.rm = TRUE),
+    .groups = &quot;drop&quot;
+  ) |&gt;
+  filter(nb_occurrences &gt;= 10)
+
+stats_mots |&gt;
+  arrange(desc(note_moyenne), desc(nb_occurrences)) |&gt;
+  slice_head(n = 10)</code></pre>
+<pre><code>## # A tibble: 10 × 3
+##    mot         nb_occurrences note_moyenne
+##    &lt;chr&gt;                &lt;int&gt;        &lt;dbl&gt;
+##  1 léger                   21         4.71
+##  2 solide                  21         4.71
+##  3 satisfait               38         4.66
+##  4 très                    38         4.66
+##  5 bonne                   28         4.64
+##  6 parfait                 28         4.61
+##  7 randonnée               28         4.61
+##  8 la                      53         4.58
+##  9 description             25         4.56
+## 10 à                       25         4.56</code></pre>
+<pre class="r"><code>stats_mots |&gt;
+  arrange(note_moyenne, desc(nb_occurrences)) |&gt;
+  slice_head(n = 10)</code></pre>
+<pre><code>## # A tibble: 10 × 3
+##    mot       nb_occurrences note_moyenne
+##    &lt;chr&gt;              &lt;int&gt;        &lt;dbl&gt;
+##  1 pas                   14         1.36
+##  2 trop                  17         1.71
+##  3 petite                11         1.82
+##  4 taille                11         1.82
+##  5 fait                  11         3   
+##  6 travail               11         3   
+##  7 lourd                 10         3   
+##  8 peu                   10         3   
+##  9 un                    10         3   
+## 10 livraison             37         3.76</code></pre>
+<p>Les mots associés aux meilleures notes moyennes traduisent la
+satisfaction et la qualité du produit, tandis que ceux associés aux
+pires notes reflètent les défauts, pannes ou déceptions clients.</p>
+</div>
+</div>
+<div id="d4" class="section level2">
+<h2>D4</h2>
+<div id="a.-calcul-du-score-de-sentiment-avec-gestion-de-la-négation" class="section level3">
+<h3>a. Calcul du score de sentiment avec gestion de la négation</h3>
+<pre class="r"><code>lex_positif &lt;- c(
+  &quot;satisfait&quot;, &quot;excellent&quot;, &quot;rapide&quot;, &quot;confortable&quot;, &quot;recommande&quot;, &quot;parfait&quot;,
+  &quot;solide&quot;, &quot;léger&quot;, &quot;super&quot;, &quot;bonne&quot;, &quot;conforme&quot;, &quot;correct&quot;
+)
+
+lex_negatif &lt;- c(
+  &quot;déçu&quot;, &quot;petite&quot;, &quot;retard&quot;, &quot;cassé&quot;, &quot;fragile&quot;, &quot;mauvaise&quot;, &quot;lourd&quot;,
+  &quot;étanche&quot;, &quot;injoignable&quot;, &quot;cher&quot;
+)
+
+regex_pos &lt;- paste0(&quot;\\b(&quot;, paste(lex_positif, collapse = &quot;|&quot;), &quot;)\\b&quot;)
+regex_neg &lt;- paste0(&quot;\\b(&quot;, paste(lex_negatif, collapse = &quot;|&quot;), &quot;)\\b&quot;)
+
+avis_score &lt;- avis_d1 |&gt;
+  mutate(
+    texte_analyse = str_to_lower(texte_str) |&gt;
+      str_replace_all(&quot;\\bne\\s+recommande\\s+pas\\b&quot;, &quot;deconseille&quot;) |&gt;
+      str_replace_all(&quot;\\bn&#39;est\\s+pas\\s+satisfait\\b&quot;, &quot;decu&quot;) |&gt;
+      str_replace_all(&quot;\\bpas\\s+satisfait\\b&quot;, &quot;decu&quot;),
+    nb_positifs = str_count(texte_analyse, regex_pos),
+    nb_negatifs = str_count(texte_analyse, regex_neg),
+    score = nb_positifs - nb_negatifs
+  )
+
+avis_score |&gt;
+  select(id_avis, produit, note = note_num, nb_positifs, nb_negatifs, score) |&gt;
+  slice_head(n = 10)</code></pre>
+<pre><code>## # A tibble: 10 × 6
+##    id_avis produit             note nb_positifs nb_negatifs score
+##      &lt;int&gt; &lt;chr&gt;              &lt;dbl&gt;       &lt;int&gt;       &lt;int&gt; &lt;int&gt;
+##  1       1 Veste pluie légère     1           0           1    -1
+##  2       2 Gourde isotherme       5           3           0     3
+##  3       3 Raquette junior        5           2           0     2
+##  4       4 Raquette junior        2           0           1    -1
+##  5       5 Veste pluie légère     5           3           0     3
+##  6       6 Raquette junior        5           3           0     3
+##  7       7 Raquette junior        1           0           1    -1
+##  8       8 Gourde isotherme       5           1           0     1
+##  9       9 Sac à dos 30 L         4           1           0     1
+## 10      10 Sac à dos 30 L         5           1           0     1</code></pre>
+</div>
+<div id="b.-corrélation-entre-le-score-et-la-note" class="section level3">
+<h3>b. Corrélation entre le score et la note</h3>
+<pre class="r"><code>correlation_score &lt;- cor(avis_score$score, avis_score$note_num, use = &quot;complete.obs&quot;)
+correlation_score</code></pre>
+<pre><code>## [1] 0.8205517</code></pre>
+<p>La corrélation entre le score et la note est de 0.821, ce qui en fait
+un indicateur utile mais partiel car de nombreux avis contiennent peu ou
+pas de mots présents dans ces lexiques courts.</p>
+</div>
+<div id="c.-contradictions-avec-la-note-et-avis-contenant--" class="section level3">
+<h3>c. Contradictions avec la note et avis contenant
+<code>:-)</code></h3>
+<pre class="r"><code>contradictions &lt;- avis_score |&gt;
+  filter((score &gt; 0 &amp; note_num &lt;= 2) | (score &lt; 0 &amp; note_num &gt;= 4))
+
+nrow(contradictions)</code></pre>
+<pre><code>## [1] 0</code></pre>
+<pre class="r"><code>avis_score |&gt;
+  filter(str_detect(texte_str, fixed(&quot;:-)&quot;)) | str_detect(texte_str, &quot;:\\)&quot;)) |&gt;
+  select(id_avis, produit, note = note_num, score, texte_str)</code></pre>
+<pre><code>## # A tibble: 7 × 5
+##   id_avis produit              note score texte_str                             
+##     &lt;int&gt; &lt;chr&gt;               &lt;dbl&gt; &lt;int&gt; &lt;chr&gt;                                 
+## 1      21 Tente 2 places          4     1 CONFORME À LA DESCRIPTION :)          
+## 2      82 Gourde isotherme        5     3 Solide et léger ! je recommande :)    
+## 3     123 Chaussures trail X3     5     2 Confortable dès le premier jour, conf…
+## 4     128 Veste pluie légère      4     1 Livraison rapide :)                   
+## 5     133 Sac à dos 30 L          3     0 Fait le travail :)                    
+## 6     152 Veste pluie légère      5     2 Très satisfait. conforme à la descrip…
+## 7     163 Raquette junior         2    -1 Taille trop petite :)</code></pre>
+<p>On relève 0 cas de contradiction entre le score lexical et la note,
+et l’affichage des avis avec <code>:-)</code> montre que certains
+émoticônes peuvent accompagner des remarques nuancées ou ironiques.</p>
+</div>
+</div>
+<div id="d5" class="section level2">
+<h2>D5</h2>
+<pre class="r"><code>mot_neg_top_produit &lt;- mots_sans_vides |&gt;
+  filter(mot %in% lex_negatif) |&gt;
+  count(produit, mot, name = &quot;nb_neg&quot;) |&gt;
+  group_by(produit) |&gt;
+  slice_max(order_by = nb_neg, n = 1, with_ties = FALSE) |&gt;
+  ungroup() |&gt;
+  select(produit, mot_negatif_top = mot)
+
+synthese_produits &lt;- avis_score |&gt;
+  group_by(produit) |&gt;
+  summarise(
+    nb_avis = n(),
+    note_moyenne = mean(note_num, na.rm = TRUE),
+    score_moyen = mean(score, na.rm = TRUE),
+    part_negatifs = mean(note_num &lt;= 2, na.rm = TRUE),
+    .groups = &quot;drop&quot;
+  ) |&gt;
+  left_join(mot_neg_top_produit, by = &quot;produit&quot;) |&gt;
+  arrange(note_moyenne)
+
+synthese_produits</code></pre>
+<pre><code>## # A tibble: 6 × 6
+##   produit         nb_avis note_moyenne score_moyen part_negatifs mot_negatif_top
+##   &lt;chr&gt;             &lt;int&gt;        &lt;dbl&gt;       &lt;dbl&gt;         &lt;dbl&gt; &lt;chr&gt;          
+## 1 Veste pluie lé…      34         3.56       1.32         0.176  lourd          
+## 2 Sac à dos 30 L       29         3.69       0.690        0.172  lourd          
+## 3 Gourde isother…      30         3.83       1.2          0.167  petite         
+## 4 Chaussures tra…      34         3.97       1.5          0.118  petite         
+## 5 Raquette junior      27         4          1.74         0.185  petite         
+## 6 Tente 2 places       26         4.15       1.96         0.0769 cher</code></pre>
+<pre class="r"><code>meilleur_prod &lt;- synthese_produits |&gt; slice_max(order_by = note_moyenne, n = 1, with_ties = FALSE)
+pire_prod &lt;- synthese_produits |&gt; slice_min(order_by = note_moyenne, n = 1, with_ties = FALSE)</code></pre>
+<p>Le produit <strong>Tente 2 places</strong> arrive en tête avec une
+note moyenne de 4.15/5 (7.7 % d’avis négatifs), tandis que <strong>Veste
+pluie légère</strong> affiche la note la plus basse à 3.56/5 avec 17.6 %
+d’avis négatifs. Il convient donc d’investiguer en priorité les points
+faibles signalés sur <strong>Veste pluie légère</strong> (notamment
+autour du terme « lourd ») tout en capitalisant sur les atouts de
+<strong>Tente 2 places</strong>.</p>
 </div>
 </div>
 

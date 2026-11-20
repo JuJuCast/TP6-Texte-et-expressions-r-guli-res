@@ -562,4 +562,260 @@ toutes_ipv4 <- all(str_detect(log_tbl$ip, regex_ipv4))
 toutes_ipv4
 ```
 
-Toutes les adresses IP du journal respectent bien le format IPv4 (`r toutes_ipv4`).
+
+
+
+
+
+
+
+
+# Partie D : Analyse textuelle d'avis clients
+
+## D1
+
+### a. Longueur moyenne et avis le plus long
+
+```{r}
+avis <- read_csv("data/avis_clients.csv", show_col_types = FALSE) |>
+  mutate(id_avis = row_number())
+
+col_texte <- intersect(c("texte", "avis", "commentaire", "review"), names(avis))[1]
+col_note <- intersect(c("note", "rating", "score"), names(avis))[1]
+
+avis_d1 <- avis |>
+  mutate(
+    texte_str = as.character(.data[[col_texte]]),
+    note_num = as.numeric(.data[[col_note]]),
+    longueur = str_length(texte_str)
+  )
+
+longueur_moyenne <- mean(avis_d1$longueur, na.rm = TRUE)
+avis_plus_long <- avis_d1 |>
+  slice_max(order_by = longueur, n = 1, with_ties = FALSE)
+
+longueur_moyenne
+avis_plus_long |>
+  select(id_avis, produit, note_num, longueur, texte_str)
+```
+
+La longueur moyenne d'un avis est de `r round(longueur_moyenne, 2)` caractères, et l'avis le plus long compte `r avis_plus_long$longueur[1]` caractères (sur le produit `r avis_plus_long$produit[1]`).
+
+### b. Avis entièrement en majuscules et note moyenne
+
+```{r}
+avis_d1 <- avis_d1 |>
+  mutate(
+    tout_maj = str_detect(texte_str, "[[:alpha:]]") & (texte_str == str_to_upper(texte_str))
+  )
+
+avis_d1 |>
+  group_by(tout_maj) |>
+  summarise(
+    nb_avis = n(),
+    note_moyenne = mean(note_num, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Il y a `r sum(avis_d1$tout_maj, na.rm = TRUE)` avis écrits entièrement en majuscules, et leur note moyenne diffère de celle des autres avis comme le montre le tableau ci-dessus.
+
+### c. Points d'exclamation et émoticônes
+
+```{r}
+nb_exclam <- sum(str_detect(avis_d1$texte_str, "!"), na.rm = TRUE)
+nb_emoticone <- sum(str_detect(avis_d1$texte_str, ":\\)|:\\(|;\\)|:D"), na.rm = TRUE)
+
+c(point_exclamation = nb_exclam, emoticone = nb_emoticone)
+```
+
+On dénombre `r nb_exclam` avis contenant au moins un point d'exclamation et `r nb_emoticone` avis contenant un émoticône.
+
+## D2
+
+### a. Découpage en mots
+
+```{r}
+mots <- avis_d1 |>
+  mutate(
+    texte_minuscule = str_to_lower(texte_str),
+    liste_mots = str_split(texte_minuscule, "[^[[:alpha:]']]+")
+  ) |>
+  select(id_avis, produit, note = note_num, liste_mots) |>
+  unnest(liste_mots) |>
+  mutate(mot = str_remove_all(liste_mots, "^'+|'+$")) |>
+  select(id_avis, produit, note, mot) |>
+  filter(mot != "", !is.na(mot))
+
+head(mots, 15)
+```
+
+### b. Nombre total de mots et mots distincts
+
+```{r}
+nb_mots_total <- nrow(mots)
+nb_mots_distincts <- n_distinct(mots$mot)
+
+c(total_mots = nb_mots_total, mots_distincts = nb_mots_distincts)
+```
+
+Le corpus contient `r nb_mots_total` mots au total pour `r nb_mots_distincts` mots distincts.
+
+### c. Top 10 des mots avec et sans mots vides
+
+```{r}
+mots |>
+  count(mot, sort = TRUE, name = "occurrences") |>
+  slice_head(n = 10)
+
+mots_vides <- c(
+  "le", "la", "les", "un", "une", "des", "du", "de", "d", "l",
+  "et", "ou", "mais", "donc", "or", "ni", "car",
+  "à", "au", "aux", "en", "dans", "sur", "pour", "par", "avec", "sans", "chez", "vers", "sous",
+  "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
+  "me", "te", "se", "lui", "leur", "y", "en", "mon", "ma", "mes", "ton", "ta", "tes", "son", "sa", "ses", "notre", "nos", "votre", "vos", "leurs",
+  "ce", "cet", "cette", "ces", "qui", "que", "quoi", "dont", "où",
+  "est", "sont", "ai", "as", "a", "avons", "avez", "ont", "être", "avoir", "fait", "faire",
+  "pas", "ne", "plus", "très", "bien", "tout", "tous", "toute", "toutes", "ça", "c"
+)
+
+mots_sans_vides <- mots |>
+  filter(!mot %in% mots_vides)
+
+mots_sans_vides |>
+  count(mot, sort = TRUE, name = "occurrences") |>
+  slice_head(n = 10)
+```
+
+## D3
+
+### a. Top 5 des mots par catégorie de note
+
+```{r}
+mots_categories <- mots_sans_vides |>
+  mutate(
+    categorie = case_when(
+      note <= 2 ~ "negatif",
+      note == 3 ~ "neutre",
+      note >= 4 ~ "positif"
+    )
+  )
+
+mots_categories |>
+  count(categorie, mot, name = "occurrences") |>
+  group_by(categorie) |>
+  slice_max(order_by = occurrences, n = 5, with_ties = FALSE) |>
+  arrange(categorie, desc(occurrences))
+```
+
+### b. Note moyenne des mots fréquents (>= 10 occurrences)
+
+```{r}
+stats_mots <- mots |>
+  group_by(mot) |>
+  summarise(
+    nb_occurrences = n(),
+    note_moyenne = mean(note, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  filter(nb_occurrences >= 10)
+
+stats_mots |>
+  arrange(desc(note_moyenne), desc(nb_occurrences)) |>
+  slice_head(n = 10)
+
+stats_mots |>
+  arrange(note_moyenne, desc(nb_occurrences)) |>
+  slice_head(n = 10)
+```
+
+Les mots associés aux meilleures notes moyennes traduisent la satisfaction et la qualité du produit, tandis que ceux associés aux pires notes reflètent les défauts, pannes ou déceptions clients.
+
+## D4
+
+### a. Calcul du score de sentiment avec gestion de la négation
+
+```{r}
+lex_positif <- c(
+  "satisfait", "excellent", "rapide", "confortable", "recommande", "parfait",
+  "solide", "léger", "super", "bonne", "conforme", "correct"
+)
+
+lex_negatif <- c(
+  "déçu", "petite", "retard", "cassé", "fragile", "mauvaise", "lourd",
+  "étanche", "injoignable", "cher"
+)
+
+regex_pos <- paste0("\\b(", paste(lex_positif, collapse = "|"), ")\\b")
+regex_neg <- paste0("\\b(", paste(lex_negatif, collapse = "|"), ")\\b")
+
+avis_score <- avis_d1 |>
+  mutate(
+    texte_analyse = str_to_lower(texte_str) |>
+      str_replace_all("\\bne\\s+recommande\\s+pas\\b", "deconseille") |>
+      str_replace_all("\\bn'est\\s+pas\\s+satisfait\\b", "decu") |>
+      str_replace_all("\\bpas\\s+satisfait\\b", "decu"),
+    nb_positifs = str_count(texte_analyse, regex_pos),
+    nb_negatifs = str_count(texte_analyse, regex_neg),
+    score = nb_positifs - nb_negatifs
+  )
+
+avis_score |>
+  select(id_avis, produit, note = note_num, nb_positifs, nb_negatifs, score) |>
+  slice_head(n = 10)
+```
+
+### b. Corrélation entre le score et la note
+
+```{r}
+correlation_score <- cor(avis_score$score, avis_score$note_num, use = "complete.obs")
+correlation_score
+```
+
+La corrélation entre le score et la note est de `r round(correlation_score, 3)`, ce qui en fait un indicateur utile mais partiel car de nombreux avis contiennent peu ou pas de mots présents dans ces lexiques courts.
+
+### c. Contradictions avec la note et avis contenant `:-)`
+
+```{r}
+contradictions <- avis_score |>
+  filter((score > 0 & note_num <= 2) | (score < 0 & note_num >= 4))
+
+nrow(contradictions)
+
+avis_score |>
+  filter(str_detect(texte_str, fixed(":-)")) | str_detect(texte_str, ":\\)")) |>
+  select(id_avis, produit, note = note_num, score, texte_str)
+```
+
+On relève `r nrow(contradictions)` cas de contradiction entre le score lexical et la note, et l'affichage des avis avec `:-)` montre que certains émoticônes peuvent accompagner des remarques nuancées ou ironiques.
+
+## D5
+
+```{r}
+mot_neg_top_produit <- mots_sans_vides |>
+  filter(mot %in% lex_negatif) |>
+  count(produit, mot, name = "nb_neg") |>
+  group_by(produit) |>
+  slice_max(order_by = nb_neg, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(produit, mot_negatif_top = mot)
+
+synthese_produits <- avis_score |>
+  group_by(produit) |>
+  summarise(
+    nb_avis = n(),
+    note_moyenne = mean(note_num, na.rm = TRUE),
+    score_moyen = mean(score, na.rm = TRUE),
+    part_negatifs = mean(note_num <= 2, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  left_join(mot_neg_top_produit, by = "produit") |>
+  arrange(note_moyenne)
+
+synthese_produits
+
+meilleur_prod <- synthese_produits |> slice_max(order_by = note_moyenne, n = 1, with_ties = FALSE)
+pire_prod <- synthese_produits |> slice_min(order_by = note_moyenne, n = 1, with_ties = FALSE)
+```
+
+Le produit **`r meilleur_prod$produit[1]`** arrive en tête avec une note moyenne de `r round(meilleur_prod$note_moyenne[1], 2)`/5 (`r round(meilleur_prod$part_negatifs[1] * 100, 1)` % d'avis négatifs), tandis que **`r pire_prod$produit[1]`** affiche la note la plus basse à `r round(pire_prod$note_moyenne[1], 2)`/5 avec `r round(pire_prod$part_negatifs[1] * 100, 1)` % d'avis négatifs. Il convient donc d'investiguer en priorité les points faibles signalés sur **`r pire_prod$produit[1]`** (notamment autour du terme « `r pire_prod$mot_negatif_top[1]` ») tout en capitalisant sur les atouts de **`r meilleur_prod$produit[1]`**.
