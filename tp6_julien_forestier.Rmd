@@ -378,3 +378,188 @@ nb_complets
 ```
 
 Au total, `r nb_complets` contacts sont complets (sans aucune valeur manquante) sur l'ensemble du fichier.
+
+
+
+
+
+
+
+# Partie C : Analyser le journal d'un serveur
+
+## C1
+
+```{r}
+lignes_log <- read_lines("data/journal_serveur.log")
+
+nb_lignes <- length(lignes_log)
+nb_info <- sum(str_detect(lignes_log, "\\[INFO\\]"))
+nb_warn <- sum(str_detect(lignes_log, "\\[WARN\\]"))
+nb_error <- sum(str_detect(lignes_log, "\\[ERROR\\]"))
+
+c(total = nb_lignes, INFO = nb_info, WARN = nb_warn, ERROR = nb_error)
+```
+
+Le journal contient `r nb_lignes` lignes au total, dont `r nb_info` lignes de niveau `INFO`, `r nb_warn` lignes de niveau `WARN` et `r nb_error` lignes de niveau `ERROR`.
+
+## C2
+
+```{r}
+log_tbl <- tibble(ligne = lignes_log) |>
+  mutate(
+    horodatage = ymd_hms(str_extract(ligne, "^\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}")),
+    niveau = str_match(ligne, "\\[(INFO|WARN|ERROR)\\]")[, 2],
+    user_raw = str_match(ligne, "user=(\\S+)")[, 2],
+    user = na_if(user_raw, "-"),
+    ip = str_match(ligne, "ip=(\\S+)")[, 2],
+    action = str_match(ligne, "action=(\\S+)")[, 2],
+    fichier = str_match(ligne, "fichier=(\\S+)")[, 2],
+    code = as.integer(str_match(ligne, "code=(\\d+)")[, 2]),
+    duree = as.numeric(str_match(ligne, "duree=(\\d+)ms")[, 2]),
+    msg = str_match(ligne, 'msg="([^"]*)"')[, 2]
+  ) |>
+  select(horodatage, niveau, user, ip, action, fichier, code, duree, msg)
+
+glimpse(log_tbl)
+```
+
+## C3
+
+### a. Requêtes par jour et par niveau
+
+```{r}
+log_tbl |>
+  mutate(jour = as_date(horodatage)) |>
+  count(jour, niveau) |>
+  pivot_wider(names_from = niveau, values_from = n, values_fill = 0)
+```
+
+### b. Heure la plus sollicitée
+
+```{r}
+par_heure <- log_tbl |>
+  mutate(heure = hour(horodatage)) |>
+  count(heure, sort = TRUE, name = "nb_requetes")
+
+par_heure
+
+heure_pic <- par_heure$heure[1]
+```
+
+Tous jours confondus, le serveur est le plus sollicité à **`r heure_pic` h** (`r par_heure$nb_requetes[1]` requêtes).
+
+### c. Utilisateurs avec le plus d'erreurs et part de requêtes anonymes
+
+```{r}
+log_tbl |>
+  filter(niveau == "ERROR", !is.na(user)) |>
+  count(user, sort = TRUE, name = "nb_erreurs")
+
+part_anonyme <- mean(is.na(log_tbl$user)) * 100
+part_anonyme
+```
+
+La part des requêtes anonymes (`user=-`) est de `r round(part_anonyme, 2)` %.
+
+## C4
+
+### a. Durée médiane et 90e centile par action
+
+```{r}
+log_tbl |>
+  group_by(action) |>
+  summarise(
+    nb_requetes = n(),
+    duree_mediane = median(duree, na.rm = TRUE),
+    centile_90 = quantile(duree, probs = 0.90, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+### b. Durée médiane par niveau
+
+```{r}
+duree_niveau <- log_tbl |>
+  group_by(niveau) |>
+  summarise(
+    duree_mediane = median(duree, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(duree_mediane))
+
+duree_niveau
+```
+
+Les requêtes en `ERROR` présentent une durée médiane plus élevée que celles en `INFO` ou `WARN`, ce qui indique qu'elles sont globalement plus lentes.
+
+### c. Messages d'erreur et fréquence
+
+```{r}
+log_tbl |>
+  filter(!is.na(msg)) |>
+  count(msg, sort = TRUE, name = "occurrences")
+```
+
+### d. Fichiers téléchargés avec succès par extension
+
+```{r}
+log_tbl |>
+  filter(action == "download", code == 200, !is.na(fichier)) |>
+  mutate(extension = str_to_lower(str_extract(fichier, "[^.]+$"))) |>
+  group_by(extension) |>
+  summarise(
+    nb_telechargements = n(),
+    fichiers_top = paste(names(sort(table(fichier), decreasing = TRUE))[seq_len(min(3, length(unique(fichier))))], collapse = ", "),
+    .groups = "drop"
+  ) |>
+  arrange(desc(nb_telechargements))
+```
+
+## C5
+
+### a. Requêtes et adresses distinctes hors réseau interne
+
+```{r}
+ext_log <- log_tbl |>
+  filter(!str_starts(ip, "192\\.168\\."))
+
+nb_req_ext <- nrow(ext_log)
+nb_ip_ext <- n_distinct(ext_log$ip)
+
+c(requetes_exterieures = nb_req_ext, ips_distinctes = nb_ip_ext)
+```
+
+Il y a `r nb_req_ext` requêtes provenant de l'extérieur du réseau interne, réparties sur `r nb_ip_ext` adresses IP distinctes.
+
+### b. Activité des adresses extérieures et adresse la plus suspecte
+
+```{r}
+suspects_ip <- ext_log |>
+  group_by(ip) |>
+  summarise(
+    nb_requetes = n(),
+    nb_users = n_distinct(user, na.rm = TRUE),
+    nb_erreurs = sum(niveau == "ERROR", na.rm = TRUE),
+    nb_refus_401_429 = sum(code %in% c(401L, 429L), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(nb_refus_401_429), desc(nb_erreurs), desc(nb_requetes))
+
+suspects_ip
+
+ip_plus_suspecte <- suspects_ip$ip[1]
+```
+
+L'adresse la plus suspecte est **`r ip_plus_suspecte`**, car elle cumule le plus de refus d'authentification ou de limitation (`401`/`429`) et d'erreurs sur un volume important de requêtes.
+
+### c. Vérification du format IPv4
+
+```{r}
+octet <- "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)"
+regex_ipv4 <- paste0("^", octet, "\\.", octet, "\\.", octet, "\\.", octet, "$")
+
+toutes_ipv4 <- all(str_detect(log_tbl$ip, regex_ipv4))
+toutes_ipv4
+```
+
+Toutes les adresses IP du journal respectent bien le format IPv4 (`r toutes_ipv4`).
